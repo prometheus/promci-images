@@ -28,3 +28,20 @@ jobs:
           login: ${{ secrets.docker_hub_login }}
           password: ${{ secrets.docker_hub_password }}
 ```
+
+### Secondary images
+
+For a subdirectory with its own Makefile (for example `generator/`), set
+`working_directory` and skip multi-arch manifests when that Makefile has no
+`docker-manifest` target:
+
+```yaml
+- uses: prometheus/promci-images/publish@<hash>
+  with:
+    registry: docker.io
+    organization: prom
+    login: ${{ secrets.docker_hub_login }}
+    password: ${{ secrets.docker_hub_password }}
+    working_directory: generator
+    skip_manifest: true
+```

@@ -18,6 +18,15 @@ inputs:
   container_image_name:
     description: Name of the container image
     default: ""
+  working_directory:
+    description: Directory passed to make -C (for secondary images with their own Makefile)
+    default: "."
+  skip_manifest:
+    description: Skip make docker-manifest (for single-arch Makefiles without that target)
+    default: "false"
+  extra_make_args:
+    description: Extra arguments appended to make invocations (e.g. REPO_TAG=v1.2.3)
+    default: ""
 runs:
   using: composite
   steps:
@@ -34,11 +43,13 @@ runs:
         current_tag=${GITHUB_REF#refs/*/}
         touch /tmp/tmp-profile
         . /tmp/tmp-profile
-        make docker DOCKER_IMAGE_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
+        make -C "${{ inputs.working_directory }}" docker DOCKER_IMAGE_TAG="$current_tag" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
         docker images
         echo ${{ inputs.password }} | docker login -u ${{ inputs.login }} --password-stdin ${{ inputs.registry }}
-        make docker-publish DOCKER_IMAGE_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
-        make docker-manifest DOCKER_IMAGE_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
+        make -C "${{ inputs.working_directory }}" docker-publish DOCKER_IMAGE_TAG="$current_tag" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
+        if [[ "${{ inputs.skip_manifest }}" != "true" ]]; then
+          make -C "${{ inputs.working_directory }}" docker-manifest DOCKER_IMAGE_TAG="$current_tag" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
+        fi
         if [[ "$current_tag" =~ ^v[0-9]+(\.[0-9]+){2}$ ]]; then
           # Get the latest stable release tag (excluding pre-releases)
           latest_tag=$(git tag -l 'v*' | grep -P '^v\d+\.\d+\.\d+$' | sort -V -r | head -n1)
@@ -48,9 +59,11 @@ runs:
           # Only push "latest" tags if this is the latest stable release
           if [[ "${current_tag}" == "${latest_tag}" ]]; then
             echo "This is the latest stable release, pushing 'latest' tags"
-            make docker-tag-latest DOCKER_IMAGE_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
-            make docker-publish DOCKER_IMAGE_TAG="latest" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
-            make docker-manifest DOCKER_IMAGE_TAG="latest" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }}
+            make -C "${{ inputs.working_directory }}" docker-tag-latest DOCKER_IMAGE_TAG="$current_tag" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
+            make -C "${{ inputs.working_directory }}" docker-publish DOCKER_IMAGE_TAG="latest" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
+            if [[ "${{ inputs.skip_manifest }}" != "true" ]]; then
+              make -C "${{ inputs.working_directory }}" docker-manifest DOCKER_IMAGE_TAG="latest" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }}
+            fi
           else
             echo "Skipping 'latest' tags - $current_tag is not the latest stable release"
           fi
