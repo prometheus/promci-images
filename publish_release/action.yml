@@ -30,6 +30,14 @@ inputs:
 runs:
   using: composite
   steps:
+    # Checked first so a missing permission fails before anything is pushed.
+    - name: Check id-token permission for signing
+      run: |
+        if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]]; then
+          echo "::error::Signing release images requires 'id-token: write' on the calling job."
+          exit 1
+        fi
+      shell: bash
     - if: inputs.dockerfile_path != ''
       run: echo "export DOCKERFILE_PATH=${{ inputs.dockerfile_path }}" >> /tmp/tmp-profile
       shell: bash
@@ -68,4 +76,40 @@ runs:
             echo "Skipping 'latest' tags - $current_tag is not the latest stable release"
           fi
         fi
+      shell: bash
+    - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+    - name: Sign release images
+      run: |
+        current_tag=${GITHUB_REF#refs/*/}
+        image_tag=${current_tag//+/-}
+        touch /tmp/tmp-profile
+        . /tmp/tmp-profile
+        make_args=(-s --no-print-directory -C "${{ inputs.working_directory }}" DOCKER_IMAGE_TAG="$current_tag" REPO_TAG="$current_tag" DOCKER_REPO=${{ inputs.registry }}/${{ inputs.organization }} ${{ inputs.extra_make_args }})
+        # Print a Makefile variable.
+        make_var() { make "${make_args[@]}" --eval='print-%: ; @echo $($*)' "print-$1"; }
+
+        repo=$(make "${make_args[@]}" docker-repo-name)
+        variants=$(make_var DOCKERFILE_VARIANT_NAMES)
+        if [[ "${{ inputs.skip_manifest }}" == "true" ]]; then
+          names=()
+          for arch in $(make_var DOCKER_ARCHS); do names+=("${repo}-linux-${arch}"); done
+        else
+          names=("$repo")
+        fi
+
+        # Sign each pushed image once by digest; "latest" and "vN" tags point at the same digests.
+        for name in "${names[@]}"; do
+          for variant in ${variants:-default}; do
+            suffix=""
+            [[ "$variant" != "default" ]] && suffix="-${variant}"
+            ref="${name}:${image_tag}${suffix}"
+            digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r '.digest // empty')
+            if [[ -z "$digest" ]]; then
+              echo "::error::Could not resolve digest for ${ref}"
+              exit 1
+            fi
+            echo "Signing ${name}@${digest}"
+            cosign sign --yes "${name}@${digest}"
+          done
+        done
       shell: bash

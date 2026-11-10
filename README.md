@@ -18,6 +18,9 @@ jobs:
           login: ${{ secrets.docker_hub_login }}
           password: ${{ secrets.docker_hub_password }}
   publish_release:
+    permissions:
+      contents: read
+      id-token: write # keyless signing of release images
     steps:
       ...
       - uses: prometheus/promci-artifacts/restore@<hash> # v0.1.0
@@ -27,6 +30,19 @@ jobs:
           organization: prome
           login: ${{ secrets.docker_hub_login }}
           password: ${{ secrets.docker_hub_password }}
+```
+
+### Signed release images
+
+`publish_release` signs every pushed release image by digest with
+[cosign](https://github.com/sigstore/cosign) keyless signing, so the calling
+job needs `id-token: write`. The certificate identity is the calling
+repository's workflow at the release tag:
+
+```sh
+cosign verify quay.io/prometheus/node-exporter:v1.10.2 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/prometheus/node_exporter/\.github/workflows/ci\.yml@refs/tags/v'
 ```
 
 ### Secondary images
